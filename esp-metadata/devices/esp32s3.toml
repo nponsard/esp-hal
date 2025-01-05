@@ -75,6 +75,7 @@ symbols = [
     "very_large_intr_status",
     "gpio_bank_1",
     "spi_octal",
+    "touch",
 
     # ROM capabilities
     "rom_crc_le",

@@ -490,6 +490,100 @@ macro_rules! rtcio_analog {
     };
 }
 
+/// Common functionality for all touch pads
+macro_rules! touch {
+    (@pin_specific $touch_num:expr, true) => {
+        paste::paste! {
+            unsafe { RTC_IO::steal() }.touch_pad($touch_num).write(|w| unsafe {
+                w.xpd().set_bit();
+                // clear input_enable
+                w.fun_ie().clear_bit();
+                // Connect pin to analog / RTC module instead of standard GPIO
+                w.mux_sel().set_bit();
+                // Disable pull-up and pull-down resistors on the pin
+                w.rue().clear_bit();
+                w.rde().clear_bit();
+                w.tie_opt().clear_bit();
+                // Select function "RTC function 1" (GPIO) for analog use
+                w.fun_sel().bits(0b00)
+            });
+        }
+    };
+
+    (@pin_specific $touch_num:expr, false) => {
+        paste::paste! {
+            unsafe { RTC_IO::steal() }.touch_pad($touch_num).write(|w| {
+                w.xpd().set_bit();
+                w.tie_opt().clear_bit()
+            });
+        }
+    };
+
+    (
+        $(
+            (
+                $touch_num:literal, $pin_num:literal, $touch_out_reg:expr, $touch_thres_reg:expr, $normal_pin:literal
+            )
+        )+
+    ) => {
+        $(
+        impl $crate::gpio::TouchPin for GpioPin<$pin_num> {
+            fn set_touch(&self, _: $crate::private::Internal) {
+                use $crate::peripherals::{GPIO, RTC_IO, SENS, RTC_CNTL};
+                use $crate::gpio::RtcPin;
+
+                let gpio = unsafe { GPIO::steal() };
+                let rtcio = unsafe { RTC_IO::steal() };
+                let sens = unsafe { SENS::steal() };
+                let rtc_cntl = unsafe { RTC_CNTL::steal() };
+
+                // Pad to normal mode (not open-drain)
+                gpio.pin(self.rtc_number() as usize).write(|w| w.pad_driver().clear_bit());
+
+                // clear output
+                rtcio
+                    .enable_w1tc()
+                    .write(|w| unsafe { w.enable_w1tc().bits(1 << self.rtc_number()) });
+                paste::paste! {
+                    sens . $touch_thres_reg ()
+                        .write(|w| unsafe {
+                            w.bits(
+                                0b0 // Default: 0 for esp32 gets overridden later anyway.
+                            )
+                        });
+
+                    touch!( @pin_specific $touch_num, $normal_pin );
+                }
+            }
+
+            // output should be u32 for esp32s3
+            fn touch_measurement(&self, _: $crate::private::Internal) -> u16 {
+                paste::paste! {
+                    unsafe { $crate::peripherals::SENS::steal() }
+                        . $touch_out_reg ().read()
+                        . [<sar_touch_pad $touch_num _data>] ().bits() as u16
+                }
+            }
+
+            fn touch_nr(&self, _: $crate::private::Internal) -> u8 {
+                $touch_num
+            }
+
+
+            // may need to add genericity, the esp32s3 takes u32
+            fn set_threshold(&self, threshold: u16, _: $crate::private::Internal) {
+                paste::paste! {
+                    unsafe { $crate::peripherals::SENS::steal() }
+                        . $touch_thres_reg ()
+                        .write(|w| unsafe {
+                            w.[<sar_touch_out_th $touch_num>]().bits(threshold as u32)
+                        });
+                }
+            }
+        })+
+    };
+}
+
 rtcio_analog! {
     ( 0, touch_pad(0),   "",     touch_pad0_hold )
     ( 1, touch_pad(1),   "",     touch_pad1_hold )
@@ -513,6 +607,27 @@ rtcio_analog! {
     (19, rtc_pad19(),    "",     pad19_hold      )
     (20, rtc_pad20(),    "",     pad20_hold      )
     (21, rtc_pad21(),    "",     pad21_hold      )
+}
+
+touch! {
+    // touch_nr, pin_nr, touch_out_reg, touch_thres_reg, normal_pin
+    (1  , 1,  sar_touch_status1, sar_touch_thres1, true)
+    (2, 2,  sar_touch_status2, sar_touch_thres2, true)
+    (3, 3,  sar_touch_status3, sar_touch_thres3, true)
+    (4, 4, sar_touch_status4, sar_touch_thres4, true)
+    (5, 5, sar_touch_status5, sar_touch_thres5, true)
+    (6, 6, sar_touch_status6, sar_touch_thres6, true)
+    (7, 7, sar_touch_status7, sar_touch_thres7, true)
+    (8, 8, sar_touch_status8, sar_touch_thres8, true)
+    (9, 9, sar_touch_status9, sar_touch_thres9, true)
+    (10, 10, sar_touch_status10, sar_touch_thres10, true)
+    (11, 11, sar_touch_status11, sar_touch_thres11, true)
+    (12, 12, sar_touch_status12, sar_touch_thres12, true)
+    (13, 13, sar_touch_status13, sar_touch_thres13, true)
+    (14, 14, sar_touch_status14, sar_touch_thres14, true)
+
+
+
 }
 
 // Whilst the S3 is a dual core chip, it shares the enable registers between

@@ -78,6 +78,7 @@ crate::peripherals! {
         WCL <= WCL,
         WIFI <= virtual,
         XTS_AES <= XTS_AES,
+        TOUCH <= virtual,
     ],
     pins: [
         (0, [Input, Output, Analog, RtcIo])
