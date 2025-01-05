@@ -17,7 +17,7 @@
 //! let touch_val = touchpad.read();
 //! # }
 //! ```
-//! 
+//!
 //! ## Implementation State:
 //!
 //! Mostly feature complete, missing:
@@ -34,9 +34,7 @@ use crate::{
     peripherals::{RTC_CNTL, SENS, TOUCH},
     private::{Internal, Sealed},
     rtc_cntl::Rtc,
-    Async,
-    Blocking,
-    DriverMode,
+    Async, Blocking, DriverMode,
 };
 
 /// A marker trait describing the mode the touch pad is set to.
@@ -112,37 +110,46 @@ impl<Tm: TouchMode, Dm: DriverMode> Touch<'_, Tm, Dm> {
 
         // stop touch fsm
         rtccntl
-            .state0()
+            .touch_ctrl2()
             .write(|w| w.touch_slp_timer_en().clear_bit());
         // Disable touch interrupt
-        rtccntl.int_ena().write(|w| w.touch().clear_bit());
+        rtccntl
+            .int_ena()
+            .write(|w| w.touch_active().clear_bit().touch_inactive().clear_bit());
         // Clear pending interrupts
-        rtccntl.int_clr().write(|w| w.touch().bit(true));
+        rtccntl
+            .int_clr()
+            .write(|w| w.touch_active().bit(true).touch_inactive().bit(true));
 
         // Disable all interrupts and touch pads
-        sens.sar_touch_enable().write(|w| unsafe {
-            w.touch_pad_outen1()
-                .bits(0b0)
-                .touch_pad_outen2()
-                .bits(0b0)
-                .touch_pad_worken()
-                .bits(0b0)
-        });
+        // sens.sar_touch_enable().write(|w| unsafe {
+        //     w.touch_pad_outen1()
+        //         .bits(0b0)
+        //         .touch_pad_outen2()
+        //         .bits(0b0)
+        //         .touch_pad_worken()
+        //         .bits(0b0)
+        // });
 
-        sens.sar_touch_ctrl1().write(|w| unsafe {
-            w
-                // Default to trigger when touch is below threshold
-                .touch_out_sel()
-                .bit(threshold_mode)
-                // Interrupt only on set 1
-                .touch_out_1en()
-                .set_bit()
-                .touch_meas_delay()
-                .bits(meas_dur)
-                // TODO Chip Specific
-                .touch_xpd_wait()
-                .bits(0xff)
-        });
+
+
+        // treshold mode should determine instead if we trigger on touch_active or touch_inactive
+
+
+        // sens.sar_touch_ctrl1().write(|w| unsafe {
+        //     w
+        //         // Default to trigger when touch is below threshold
+        //         .touch_out_sel()
+        //         .bit(threshold_mode)
+        //         // Interrupt only on set 1
+        //         .touch_out_1en()
+        //         .set_bit()
+        //         .touch_meas_delay()
+        //         .bits(meas_dur)
+        //         // TODO Chip Specific
+        //         .touch_xpd_wait()
+        //         .bits(0xff)
+        // });
     }
 
     /// Common parts of the continuous mode initialization.
