@@ -551,6 +551,11 @@ macro_rules! touch {
                             )
                         });
 
+                    // enable out on the touch pad
+                    sens.sar_touch_conf().write(|w| unsafe{
+                        w.sar_touch_outen().bits(1 << $touch_num)
+                    });
+
                     touch!( @pin_specific $touch_num, $normal_pin );
                 }
             }
