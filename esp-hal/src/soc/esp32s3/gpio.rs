@@ -529,7 +529,7 @@ macro_rules! touch {
         $(
         impl $crate::gpio::TouchPin for GpioPin<$pin_num> {
             fn set_touch(&self, _: $crate::private::Internal) {
-                use $crate::peripherals::{GPIO, RTC_IO, SENS, RTC_CNTL};
+                use $crate::peripherals::{GPIO, RTC_IO, SENS};
                 use $crate::gpio::RtcPin;
 
                 let gpio = unsafe { GPIO::steal() };
@@ -552,8 +552,8 @@ macro_rules! touch {
                         });
 
                     // enable out on the touch pad
-                    sens.sar_touch_conf().write(|w| unsafe{
-                        w.sar_touch_outen().bits(1 << $touch_num)
+                    sens.sar_touch_conf().modify(|r,w| unsafe{
+                        w.sar_touch_outen().bits(r.sar_touch_outen().bits() | 1 << $touch_num)
                     });
 
                     touch!( @pin_specific $touch_num, $normal_pin );
