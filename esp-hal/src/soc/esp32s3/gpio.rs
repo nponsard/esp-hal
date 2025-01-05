@@ -561,12 +561,17 @@ macro_rules! touch {
             }
 
             // output should be u32 for esp32s3
-            fn touch_measurement(&self, _: $crate::private::Internal) -> u16 {
+            fn touch_measurement(&self, _: $crate::private::Internal) -> u32 {
                 paste::paste! {
-                    unsafe { $crate::peripherals::SENS::steal() }
-                        . $touch_out_reg ().read()
-                        . [<sar_touch_pad $touch_num _data>] ().bits() as u16
-                }
+                //     unsafe { $crate::peripherals::SENS::steal() }
+                //         . $touch_out_reg ().read()
+                //         . [<sar_touch_pad $touch_num _data>] ().bits()
+                
+                unsafe { $crate::peripherals::SENS::steal() }
+                . $touch_out_reg ()
+                .read()
+                .bits()
+            }
             }
 
             fn touch_nr(&self, _: $crate::private::Internal) -> u8 {

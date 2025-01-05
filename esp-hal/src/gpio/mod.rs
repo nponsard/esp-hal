@@ -546,7 +546,7 @@ pub trait TouchPin: Pin {
 
     /// Reads the pin's touch measurement register
     #[doc(hidden)]
-    fn touch_measurement(&self, _: private::Internal) -> u16;
+    fn touch_measurement(&self, _: private::Internal) -> u32;
 
     /// Maps the pin nr to the touch pad nr
     #[doc(hidden)]

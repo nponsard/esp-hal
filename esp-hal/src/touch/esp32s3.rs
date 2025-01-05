@@ -92,21 +92,6 @@ impl<Tm: TouchMode, Dm: DriverMode> Touch<'_, Tm, Dm> {
     /// Common initialization of the touch peripheral.
     fn initialize_common(config: Option<TouchConfig>) {
         let rtccntl = unsafe { &*RTC_CNTL::ptr() };
-        let sens = unsafe { &*SENS::ptr() };
-
-        let mut threshold_mode = false;
-        let mut meas_dur = 0x7fff;
-
-        if let Some(config) = config {
-            threshold_mode = match config.threshold_mode {
-                Some(ThresholdMode::LessThan) => false,
-                Some(ThresholdMode::GreaterThan) => true,
-                None => false,
-            };
-            if let Some(dur) = config.measurement_duration {
-                meas_dur = dur;
-            }
-        }
 
         // stop touch fsm
         rtccntl
@@ -152,7 +137,6 @@ impl<Tm: TouchMode, Dm: DriverMode> Touch<'_, Tm, Dm> {
     /// Common parts of the continuous mode initialization.
     fn initialize_common_continuous(config: Option<TouchConfig>) {
         let rtccntl = unsafe { &*RTC_CNTL::ptr() };
-        let sens = unsafe { &*SENS::ptr() };
 
         // Default nr of sleep cycles from IDF
         let mut sleep_cyc = 0x1000;
@@ -164,17 +148,20 @@ impl<Tm: TouchMode, Dm: DriverMode> Touch<'_, Tm, Dm> {
 
         Self::initialize_common(config);
 
-        rtccntl.touch_ctrl2().write(|w| unsafe {
+        rtccntl.touch_ctrl2().write(|w| {
             w
                 // Configure FSM for timer mode
                 .touch_start_fsm_en()
-                .set_bit()
+                .clear_bit()
                 .touch_start_force()
                 .clear_bit()
                 // start touch fsm
                 .touch_slp_timer_en()
                 .set_bit()
         });
+        rtccntl
+            .touch_ctrl1()
+            .write(|w| unsafe { w.touch_sleep_cycles().bits(sleep_cyc) });
     }
 }
 // Async mode and OneShot does not seem to be a sensible combination....
@@ -200,7 +187,6 @@ impl<'d> Touch<'d, OneShot, Blocking> {
     ) -> Self {
         crate::into_ref!(touch_peripheral);
         let rtccntl = unsafe { &*RTC_CNTL::ptr() };
-        let sens = unsafe { &*SENS::ptr() };
 
         // Default nr of sleep cycles from IDF
         let mut sleep_cyc = 0x1000;
@@ -216,7 +202,7 @@ impl<'d> Touch<'d, OneShot, Blocking> {
             .touch_ctrl1()
             .write(|w| unsafe { w.touch_sleep_cycles().bits(sleep_cyc) });
 
-        rtccntl.touch_ctrl2().write(|w| unsafe {
+        rtccntl.touch_ctrl2().write(|w| {
             w
                 // Configure FSM for SW mode
                 .touch_start_fsm_en()
@@ -322,30 +308,30 @@ impl<P: TouchPin> TouchPad<P, OneShot, Blocking> {
     /// (Re-)Start a touch measurement on the pin. You can get the result by
     /// calling [`read`](Self::read) once it is finished.
     pub fn start_measurement(&mut self) {
-        unsafe { &*crate::peripherals::RTC_IO::ptr() }
-            .touch_pad(1)
-            .write(|w| unsafe {
-                w.start()
-                    .set_bit()
-                    .xpd()
-                    .set_bit()
-                    // clear input_enable
-                    .fun_ie()
-                    .clear_bit()
-                    // Connect pin to analog / RTC module instead of standard GPIO
-                    .mux_sel()
-                    .set_bit()
-                    // Disable pull-up and pull-down resistors on the pin
-                    .rue()
-                    .clear_bit()
-                    .rde()
-                    .clear_bit()
-                    .tie_opt()
-                    .clear_bit()
-                    // Select function "RTC function 1" (GPIO) for analog use
-                    .fun_sel()
-                    .bits(0b00)
-            });
+        // unsafe { &*crate::peripherals::RTC_IO::ptr() }
+        //     .touch_pad(1)
+        //     .write(|w| unsafe {
+        //         w.start()
+        //             .set_bit()
+        //             .xpd()
+        //             .set_bit()
+        //             // clear input_enable
+        //             .fun_ie()
+        //             .clear_bit()
+        //             // Connect pin to analog / RTC module instead of standard GPIO
+        //             .mux_sel()
+        //             .set_bit()
+        //             // Disable pull-up and pull-down resistors on the pin
+        //             .rue()
+        //             .clear_bit()
+        //             .rde()
+        //             .clear_bit()
+        //             .tie_opt()
+        //             .clear_bit()
+        //             // Select function "RTC function 1" (GPIO) for analog use
+        //             .fun_sel()
+        //             .bits(0b00)
+        //     });
 
         unsafe { &*crate::peripherals::RTC_CNTL::PTR }
             .touch_ctrl2()
@@ -380,7 +366,7 @@ impl<P: TouchPin, Tm: TouchMode, Dm: DriverMode> TouchPad<P, Tm, Dm> {
     /// Returns `None` if the value is not yet ready. (Note: Measurement must be
     /// started manually with [`start_measurement`](Self::start_measurement) if
     /// the touch peripheral is in [`OneShot`] mode).
-    pub fn try_read(&mut self) -> Option<u16> {
+    pub fn try_read(&mut self) -> Option<u32> {
         if unsafe { &*crate::peripherals::SENS::ptr() }
             .sar_touch_chn_st()
             .read()
@@ -406,14 +392,34 @@ impl<P: TouchPin, Tm: TouchMode> TouchPad<P, Tm, Blocking> {
     /// measurements are not cleared, the touch values might also be
     /// outdated, if it has been some time since the last call to that
     /// function.
-    pub fn read(&mut self) -> u16 {
-        while unsafe { &*crate::peripherals::SENS::ptr() }
+    pub fn read(&mut self) -> u32 {
+        // while unsafe { &*crate::peripherals::SENS::ptr() }
+        //     .sar_touch_chn_st()
+        //     .read()
+        //     .sar_touch_meas_done()
+        //     .bit_is_clear()
+        // {}
+
+
+        self.pin.touch_measurement(Internal)
+    }
+    /// check if ready
+    pub fn ready(&mut self) -> bool {
+        unsafe { &*crate::peripherals::SENS::ptr() }
             .sar_touch_chn_st()
             .read()
             .sar_touch_meas_done()
-            .bit_is_clear()
-        {}
-        self.pin.touch_measurement(Internal)
+            .bit_is_set()
+    }
+
+    /// check active
+    pub fn active(&mut self) -> u16 {
+        unsafe { &*crate::peripherals::SENS::ptr() }
+            .sar_touch_chn_st()
+            .read()
+            .sar_touch_pad_active()
+            .bits()
+
     }
 
     /// Enables the touch_pad interrupt.
@@ -495,7 +501,9 @@ fn internal_disable_interrupts() {
 
 fn internal_clear_interrupt() {
     let rtccntl = unsafe { &*RTC_CNTL::ptr() };
-    rtccntl.int_clr().write(|w| w.touch_active().clear_bit_by_one());
+    rtccntl
+        .int_clr()
+        .write(|w| w.touch_active().clear_bit_by_one());
     let sens = unsafe { &*SENS::ptr() };
 
     // TODO : find how to clear measurments
@@ -503,13 +511,10 @@ fn internal_clear_interrupt() {
     //     .write(|w| w.touch_meas_en_clr().set_bit());
 }
 
-// TODO
 fn internal_pins_touched() -> u16 {
     let sens = unsafe { &*SENS::ptr() };
- 
-    // sens.sar_touch_ctrl2().read().touch_meas_en().bits()
 
-    0
+    sens.sar_touch_chn_st().read().sar_touch_pad_active().bits()
 }
 
 fn internal_is_interrupt_set(touch_nr: u8) -> bool {
