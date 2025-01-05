@@ -535,7 +535,6 @@ macro_rules! touch {
                 let gpio = unsafe { GPIO::steal() };
                 let rtcio = unsafe { RTC_IO::steal() };
                 let sens = unsafe { SENS::steal() };
-                let rtc_cntl = unsafe { RTC_CNTL::steal() };
 
                 // Pad to normal mode (not open-drain)
                 gpio.pin(self.rtc_number() as usize).write(|w| w.pad_driver().clear_bit());
