@@ -82,61 +82,187 @@ pub struct TouchConfig {
     pub sleep_cycles: Option<u16>,
 }
 
+fn touch_hal_init() {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    let sens = unsafe { &*SENS::ptr() };
+    // stop the fsm
+    unsafe {
+        rtccntl.touch_ctrl2().write(|w| {
+            w.touch_start_en()
+                .clear_bit()
+                .touch_slp_timer_en()
+                .clear_bit()
+        });
+
+        rtccntl
+            .touch_ctrl2()
+            .write(|w| w.touch_timer_force_done().bits(0x3));
+        rtccntl
+            .touch_ctrl2()
+            .write(|w| w.touch_timer_force_done().bits(0x0));
+    }
+
+    // Disable touch interrupt
+    rtccntl.int_ena_rtc_w1tc().write(|w| {
+        w.touch_done()
+            .clear_bit_by_one()
+            .touch_active()
+            .clear_bit_by_one()
+            .touch_inactive()
+            .clear_bit_by_one()
+            .touch_scan_done()
+            .clear_bit_by_one()
+            .touch_timeout()
+            .clear_bit_by_one()
+            .touch_approach_loop_done()
+            .clear_bit_by_one()
+    });
+    // Clear pending interrupts
+    rtccntl.int_clr().write(|w| {
+        w.touch_done()
+            .clear_bit_by_one()
+            .touch_active()
+            .clear_bit_by_one()
+            .touch_inactive()
+            .clear_bit_by_one()
+            .touch_scan_done()
+            .clear_bit_by_one()
+            .touch_timeout()
+            .clear_bit_by_one()
+            .touch_approach_loop_done()
+            .clear_bit_by_one()
+    });
+
+    // clear channel mask
+    unsafe {
+        sens.sar_touch_conf().write(|w| w.sar_touch_outen().bits(0));
+        rtccntl
+            .touch_scan_ctrl()
+            .write(|w| w.touch_scan_pad_map().bits(0));
+    }
+
+    // clear_trigger_status_mask
+    sens.sar_touch_conf()
+        .write(|w| w.sar_touch_status_clr().set_bit());
+
+    // set meas time
+    rtccntl
+        .touch_ctrl1()
+        .write(|w| unsafe { w.touch_meas_num().bits(500) });
+    unsafe {
+        rtccntl
+            .touch_ctrl2()
+            .write(|w| w.touch_xpd_wait().bits(0xff));
+    }
+
+    // set sleep time
+    unsafe {
+        rtccntl
+            .touch_ctrl1()
+            .write(|w| w.touch_sleep_cycles().bits(0xf));
+    }
+
+    // touch_ll_sleep_low_power true
+    rtccntl.touch_ctrl2().write(|w| w.touch_dbias().set_bit());
+
+    // set low and high treshold
+    unsafe {
+        rtccntl
+            .touch_ctrl2()
+            .write(|w| w.touch_drefl().bits(0).touch_drefh().bits(3));
+    }
+
+    // set voltage attenuation to 2
+    unsafe {
+        rtccntl.touch_ctrl2().write(|w| w.touch_drange().bits(2));
+    }
+
+    // touch_ll_set_idle_channel_connect 1
+    rtccntl
+        .touch_scan_ctrl()
+        .write(|w| w.touch_inactive_connection().set_bit());
+
+    // enable clock gate
+    rtccntl
+        .touch_ctrl2()
+        .write(|w| w.touch_clkgate_en().set_bit());
+
+    // reset benchmark
+    unsafe {
+        sens.sar_touch_chn_st()
+            .write(|w| w.sar_touch_channel_clr().bits((1 << 15) - 1));
+        rtccntl
+            .touch_approach()
+            .write(|w| w.touch_slp_channel_clr().set_bit());
+    }
+}
+
 /// This struct marks a successfully initialized touch peripheral
 pub struct Touch<'d, Tm: TouchMode, Dm: DriverMode> {
     _inner: PeripheralRef<'d, TOUCH>,
     _touch_mode: PhantomData<Tm>,
     _mode: PhantomData<Dm>,
 }
+
 impl<Tm: TouchMode, Dm: DriverMode> Touch<'_, Tm, Dm> {
+    /// Reset the touch peripheral
+    pub fn reset(&self) {
+        Self::initialize_common_continuous(None);
+    }
     /// Common initialization of the touch peripheral.
     fn initialize_common(config: Option<TouchConfig>) {
+        touch_hal_init();
+
         let rtccntl = unsafe { &*RTC_CNTL::ptr() };
 
-        // stop touch fsm
-        rtccntl
-            .touch_ctrl2()
-            .write(|w| w.touch_slp_timer_en().clear_bit());
-        // Disable touch interrupt
-        rtccntl
-            .int_ena()
-            .write(|w| w.touch_active().clear_bit().touch_inactive().clear_bit());
-        // Clear pending interrupts
-        rtccntl
-            .int_clr()
-            .write(|w| w.touch_active().bit(true).touch_inactive().bit(true));
-
-        // Disable all interrupts and touch pads
-        // sens.sar_touch_enable().write(|w| unsafe {
-        //     w.touch_pad_outen1()
-        //         .bits(0b0)
-        //         .touch_pad_outen2()
-        //         .bits(0b0)
-        //         .touch_pad_worken()
-        //         .bits(0b0)
-        // });
-
-        // treshold mode should determine instead if we trigger on touch_active or touch_inactive
-
-        // sens.sar_touch_ctrl1().write(|w| unsafe {
-        //     w
-        //         // Default to trigger when touch is below threshold
-        //         .touch_out_sel()
-        //         .bit(threshold_mode)
-        //         // Interrupt only on set 1
-        //         .touch_out_1en()
-        //         .set_bit()
-        //         .touch_meas_delay()
-        //         .bits(meas_dur)
-        //         // TODO Chip Specific
-        //         .touch_xpd_wait()
-        //         .bits(0xff)
-        // });
+        unsafe {
+            rtccntl.touch_dac().write(|w| {
+                w.touch_pad0_dac()
+                    .bits(7)
+                    .touch_pad1_dac()
+                    .bits(7)
+                    .touch_pad2_dac()
+                    .bits(7)
+                    .touch_pad3_dac()
+                    .bits(7)
+                    .touch_pad4_dac()
+                    .bits(7)
+                    .touch_pad5_dac()
+                    .bits(7)
+                    .touch_pad6_dac()
+                    .bits(7)
+                    .touch_pad7_dac()
+                    .bits(7)
+                    .touch_pad8_dac()
+                    .bits(7)
+                    .touch_pad9_dac()
+                    .bits(7)
+            });
+            rtccntl.touch_dac1().write(|w| {
+                w.touch_pad10_dac()
+                    .bits(7)
+                    .touch_pad11_dac()
+                    .bits(7)
+                    .touch_pad12_dac()
+                    .bits(7)
+                    .touch_pad13_dac()
+                    .bits(7)
+                    .touch_pad14_dac()
+                    .bits(7)
+            });
+        }
     }
 
     /// Common parts of the continuous mode initialization.
     fn initialize_common_continuous(config: Option<TouchConfig>) {
         let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+        let sens = unsafe { &*SENS::ptr() };
+
+        // temp : ask for raw data
+        unsafe {
+            sens.sar_touch_conf()
+                .write(|w| w.sar_touch_data_sel().bits(0));
+        }
 
         // Default nr of sleep cycles from IDF
         let mut sleep_cyc = 0x1000;
@@ -147,6 +273,17 @@ impl<Tm: TouchMode, Dm: DriverMode> Touch<'_, Tm, Dm> {
         }
 
         Self::initialize_common(config);
+        rtccntl
+            .touch_scan_ctrl()
+            .write(|w| w.touch_denoise_en().set_bit());
+        unsafe {
+            rtccntl
+                .touch_ctrl2()
+                .write(|w| w.touch_timer_force_done().bits(0x3));
+            rtccntl
+                .touch_ctrl2()
+                .write(|w| w.touch_timer_force_done().bits(0x0));
+        }
 
         rtccntl.touch_ctrl2().write(|w| {
             w
@@ -400,7 +537,6 @@ impl<P: TouchPin, Tm: TouchMode> TouchPad<P, Tm, Blocking> {
         //     .bit_is_clear()
         // {}
 
-
         self.pin.touch_measurement(Internal)
     }
     /// check if ready
@@ -419,7 +555,6 @@ impl<P: TouchPin, Tm: TouchMode> TouchPad<P, Tm, Blocking> {
             .read()
             .sar_touch_pad_active()
             .bits()
-
     }
 
     /// Enables the touch_pad interrupt.

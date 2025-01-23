@@ -495,17 +495,17 @@ macro_rules! touch {
     (@pin_specific $touch_num:expr, true) => {
         paste::paste! {
             unsafe { RTC_IO::steal() }.touch_pad($touch_num).write(|w| unsafe {
-                w.xpd().set_bit();
+                w.xpd().set_bit()
                 // clear input_enable
-                w.fun_ie().clear_bit();
+                .fun_ie().clear_bit()
                 // Connect pin to analog / RTC module instead of standard GPIO
-                w.mux_sel().set_bit();
+                // rtcio_ll_function_select
+                .mux_sel().set_bit()
+                .fun_sel().bits(0b00)
                 // Disable pull-up and pull-down resistors on the pin
-                w.rue().clear_bit();
-                w.rde().clear_bit();
-                w.tie_opt().clear_bit();
-                // Select function "RTC function 1" (GPIO) for analog use
-                w.fun_sel().bits(0b00)
+                .rue().clear_bit()
+                .rde().clear_bit()
+                .tie_opt().clear_bit()
             });
         }
     };
@@ -536,10 +536,17 @@ macro_rules! touch {
                 let rtcio = unsafe { RTC_IO::steal() };
                 let sens = unsafe { SENS::steal() };
 
+                enable_iomux_clk_gate();
+
+                // touch_pad_io_init
+                // - rtc_gpio_set_direction
+
+
+
                 // Pad to normal mode (not open-drain)
                 gpio.pin(self.rtc_number() as usize).write(|w| w.pad_driver().clear_bit());
 
-                // clear output
+                // disable output
                 rtcio
                     .enable_w1tc()
                     .write(|w| unsafe { w.enable_w1tc().bits(1 << self.rtc_number()) });
@@ -567,11 +574,11 @@ macro_rules! touch {
                 //         . $touch_out_reg ().read()
                 //         . [<sar_touch_pad $touch_num _data>] ().bits()
                 
-                unsafe { $crate::peripherals::SENS::steal() }
-                . $touch_out_reg ()
-                .read()
-                .bits()
-            }
+                    unsafe { $crate::peripherals::SENS::steal() }
+                    . $touch_out_reg ()
+                    .read()
+                    .bits()
+                 }
             }
 
             fn touch_nr(&self, _: $crate::private::Internal) -> u8 {
