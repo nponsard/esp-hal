@@ -25,7 +25,9 @@
 //! - Touch sensor slope control
 //! - Deep Sleep support (wakeup from Deep Sleep)
 
-use core::marker::PhantomData;
+use core::{default, marker::PhantomData};
+
+use esp32s3::RTC_IO;
 
 use crate::{
     gpio::TouchPin,
@@ -33,7 +35,7 @@ use crate::{
     peripheral::{Peripheral, PeripheralRef},
     peripherals::{RTC_CNTL, SENS, TOUCH},
     private::{Internal, Sealed},
-    rtc_cntl::Rtc,
+    rtc_cntl::{rtc, Rtc},
     Async, Blocking, DriverMode,
 };
 
@@ -82,7 +84,442 @@ pub struct TouchConfig {
     pub sleep_cycles: Option<u16>,
 }
 
-fn touch_hal_init() {
+/// a
+pub fn touch_ll_read_raw_data() -> [u32; 8] {
+    let sens = unsafe { &*SENS::ptr() };
+
+    unsafe {
+        sens.sar_touch_conf()
+            .write(|w| w.sar_touch_data_sel().bits(0));
+        [
+            sens.sar_touch_status0().read().sar_touch_scan_curr().bits() as u32,
+            sens.sar_touch_status1().read().sar_touch_pad1_data().bits(),
+            sens.sar_touch_status2().read().sar_touch_pad2_data().bits(),
+            sens.sar_touch_status3().read().sar_touch_pad3_data().bits(),
+            sens.sar_touch_status4().read().sar_touch_pad4_data().bits(),
+            sens.sar_touch_status5().read().sar_touch_pad5_data().bits(),
+            sens.sar_touch_conf().read().sar_touch_data_sel().bits() as u32,
+            sens.sar_touch_conf().read().sar_touch_outen().bits() as u32,
+        ]
+    }
+}
+
+/// aa
+pub fn outen_read() -> u32 {
+    let sens = unsafe { &*SENS::ptr() };
+    sens.sar_touch_conf().read().sar_touch_outen().bits() as u32
+}
+
+/// a
+pub fn outen_clear() {
+    let sens = unsafe { &*SENS::ptr() };
+    unsafe {
+        sens.sar_touch_conf().write(|w| w.sar_touch_outen().bits(0));
+    }
+}
+
+/// a
+pub fn touch_ll_start_fsm() {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    unsafe {
+        rtccntl
+            .touch_ctrl2()
+            .write(|w| w.touch_timer_force_done().bits(0x3));
+        rtccntl
+            .touch_ctrl2()
+            .write(|w| w.touch_timer_force_done().bits(0));
+    }
+
+    rtccntl
+        .touch_ctrl2()
+        .modify(|r, w| w.touch_slp_timer_en().bit(!r.touch_start_force().bit()));
+
+    // rtccntl
+    //     .touch_ctrl2()
+    //     .write(|w| w.touch_start_en().set_bit());
+}
+/// aa
+pub fn read_fsm_mode() -> bool {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    rtccntl.touch_ctrl2().read().touch_start_force().bit()
+}
+
+/// aa
+pub fn read_started() -> bool {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    rtccntl.touch_ctrl2().read().touch_slp_timer_en().bit()
+}
+
+/// aa
+pub fn touch_ll_set_fsm_mode(mode: bool) {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    rtccntl
+        .touch_ctrl2()
+        .write(|w| w.touch_start_force().bit(mode));
+}
+fn touch_hal_set_meas_mode(channel: u8, slope: u8, tie: bool) {
+    touch_ll_set_slope(channel, slope);
+    touch_ll_set_tie_option(channel, tie);
+}
+
+fn touch_hal_denoise_set_config(grade: u8, level: u8) {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    unsafe {
+        //touch_ll_denoise_set_cap_level
+        rtccntl.touch_ctrl2().write(|w| w.touch_refc().bits(level));
+        // touch_ll_denoise_set_grade
+        rtccntl
+            .touch_scan_ctrl()
+            .write(|w| w.touch_denoise_res().bits(grade));
+    }
+}
+
+/// aa
+pub fn touch_pad_denoise_set_config(grade: u8, level: u8) {
+    touch_hal_set_meas_mode(0, 7, false);
+    touch_hal_denoise_set_config(grade, level);
+}
+
+fn touch_hal_denoise_enable() {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    rtccntl
+        .touch_scan_ctrl()
+        .write(|w| w.touch_denoise_en().set_bit());
+}
+
+/// aa
+pub fn touch_pad_denoise_enable() {
+    touch_hal_clear_channel_mask(0);
+    touch_hal_denoise_enable();
+}
+
+/// aa
+pub fn touch_pad_config(pin: u8) {
+    touch_pad_io_init(pin);
+    touch_hal_config(pin);
+    touch_hal_set_channel_mask(pin);
+}
+
+fn touch_ll_set_threshold(pin: u8, treshold: u32) {
+    let sens = unsafe { &*SENS::ptr() };
+    match pin {
+        1 => unsafe {
+            sens.sar_touch_thres1()
+                .write(|w| w.sar_touch_out_th1().bits(treshold));
+        },
+        2 => unsafe {
+            sens.sar_touch_thres2()
+                .write(|w| w.sar_touch_out_th2().bits(treshold));
+        },
+        3 => unsafe {
+            sens.sar_touch_thres3()
+                .write(|w| w.sar_touch_out_th3().bits(treshold));
+        },
+        4 => unsafe {
+            sens.sar_touch_thres4()
+                .write(|w| w.sar_touch_out_th4().bits(treshold));
+        },
+        5 => unsafe {
+            sens.sar_touch_thres5()
+                .write(|w| w.sar_touch_out_th5().bits(treshold));
+        },
+        6 => unsafe {
+            sens.sar_touch_thres6()
+                .write(|w| w.sar_touch_out_th6().bits(treshold));
+        },
+        7 => unsafe {
+            sens.sar_touch_thres7()
+                .write(|w| w.sar_touch_out_th7().bits(treshold));
+        },
+        8 => unsafe {
+            sens.sar_touch_thres8()
+                .write(|w| w.sar_touch_out_th8().bits(treshold));
+        },
+        9 => unsafe {
+            sens.sar_touch_thres9()
+                .write(|w| w.sar_touch_out_th9().bits(treshold));
+        },
+        10 => unsafe {
+            sens.sar_touch_thres10()
+                .write(|w| w.sar_touch_out_th10().bits(treshold));
+        },
+        11 => unsafe {
+            sens.sar_touch_thres11()
+                .write(|w| w.sar_touch_out_th11().bits(treshold));
+        },
+        12 => unsafe {
+            sens.sar_touch_thres12()
+                .write(|w| w.sar_touch_out_th12().bits(treshold));
+        },
+        13 => unsafe {
+            sens.sar_touch_thres13()
+                .write(|w| w.sar_touch_out_th13().bits(treshold));
+        },
+        14 => unsafe {
+            sens.sar_touch_thres14()
+                .write(|w| w.sar_touch_out_th14().bits(treshold));
+        },
+
+        _ => {
+            // panic!("Invalid pin number");
+        }
+    }
+}
+fn touch_ll_set_slope(pin: u8, slope: u8) {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    match pin {
+        0 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad0_dac().bits(slope));
+        },
+        1 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad1_dac().bits(slope));
+        },
+        2 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad2_dac().bits(slope));
+        },
+        3 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad3_dac().bits(slope));
+        },
+        4 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad4_dac().bits(slope));
+        },
+        5 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad5_dac().bits(slope));
+        },
+        6 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad6_dac().bits(slope));
+        },
+        7 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad7_dac().bits(slope));
+        },
+        8 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad8_dac().bits(slope));
+        },
+        9 => unsafe {
+            rtccntl
+                .touch_dac()
+                .write(|w| w.touch_pad9_dac().bits(slope));
+        },
+        10 => unsafe {
+            rtccntl
+                .touch_dac1()
+                .write(|w| w.touch_pad10_dac().bits(slope));
+        },
+        11 => unsafe {
+            rtccntl
+                .touch_dac1()
+                .write(|w| w.touch_pad11_dac().bits(slope));
+        },
+        12 => unsafe {
+            rtccntl
+                .touch_dac1()
+                .write(|w| w.touch_pad12_dac().bits(slope));
+        },
+        13 => unsafe {
+            rtccntl
+                .touch_dac1()
+                .write(|w| w.touch_pad13_dac().bits(slope));
+        },
+        14 => unsafe {
+            rtccntl
+                .touch_dac1()
+                .write(|w| w.touch_pad14_dac().bits(slope));
+        },
+
+        _ => {
+            // panic!("Invalid pin number");
+        }
+    }
+}
+
+fn touch_ll_set_tie_option(pin: u8, option: bool) {
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+    rtcio
+        .touch_pad(pin as usize)
+        .write(|w| w.tie_opt().bit(option));
+}
+fn touch_hal_config(pin: u8) {
+    touch_ll_set_threshold(pin, 0x1FFFFF);
+    touch_ll_set_slope(pin, 7);
+    touch_ll_set_tie_option(pin, false);
+}
+fn touch_hal_set_channel_mask(pin: u8) {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    let sens = unsafe { &*SENS::ptr() };
+    unsafe {
+        rtccntl.touch_scan_ctrl().modify(|r, w| {
+            w.touch_scan_pad_map()
+                .bits(r.touch_scan_pad_map().bits() | (1 << pin))
+        });
+        sens.sar_touch_conf().modify(|r, w| {
+            w.sar_touch_outen()
+                .bits(r.sar_touch_outen().bits() | 1 << pin)
+        });
+    }
+}
+
+fn touch_hal_clear_channel_mask(pin: u8) {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    let sens = unsafe { &*SENS::ptr() };
+    unsafe {
+        rtccntl.touch_scan_ctrl().modify(|r, w| {
+            w.touch_scan_pad_map()
+                .bits(!(r.touch_scan_pad_map().bits() & !(((1 << 15) - 1) & 1 << pin)))
+        });
+        sens.sar_touch_conf().modify(|r, w| {
+            w.sar_touch_outen()
+                .bits(r.sar_touch_outen().bits() & !(((1 << 15) - 1) & 1 << pin))
+        });
+    }
+}
+
+fn touch_pad_io_init(pin: u8) {
+    rtcio_ll_function_select(pin, 0);
+    rtcio_hal_set_direction(pin, 3);
+    rtcio_hal_pulldown_disable(pin);
+    rtcio_hal_pullup_disable(pin);
+}
+
+fn rtcio_hal_pulldown_disable(pin: u8) {
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+
+    rtcio.touch_pad(pin as usize).write(|w| w.rde().clear_bit());
+}
+
+fn rtcio_hal_pullup_disable(pin: u8) {
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+
+    rtcio.touch_pad(pin as usize).write(|w| w.rue().clear_bit());
+}
+fn rtcio_ll_output_mode_set(pin: u8, od: bool) {
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+    rtcio.pin(pin as usize).write(|w| w.pad_driver().bit(od));
+}
+fn rtcio_ll_output_enable(pin: u8) {
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+    rtcio
+        .rtc_gpio_enable_w1ts()
+        .write(|w| unsafe { w.rtc_gpio_enable_w1ts().bits(1 << pin) });
+}
+fn rtcio_ll_output_disable(pin: u8) {
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+    rtcio
+        .enable_w1tc()
+        .write(|w| unsafe { w.enable_w1tc().bits(1 << pin) });
+}
+fn rtcio_ll_input_enable(pin: u8) {
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+
+    rtcio
+        .touch_pad(pin as usize)
+        .write(|w| w.fun_ie().set_bit());
+}
+fn rtcio_ll_input_disable(pin: u8) {
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+
+    rtcio
+        .touch_pad(pin as usize)
+        .write(|w| w.fun_ie().clear_bit());
+}
+
+fn rtcio_hal_set_direction(pin: u8, mode: u8) {
+    match mode {
+        // RTC_GPIO_MODE_INPUT_ONLY
+        0 => {
+            rtcio_ll_output_mode_set(pin, false);
+            rtcio_ll_output_disable(pin);
+            rtcio_ll_input_enable(pin);
+        }
+        // RTC_GPIO_MODE_OUTPUT_ONLY
+        1 => {
+            rtcio_ll_output_mode_set(pin, false);
+            rtcio_ll_output_enable(pin);
+            rtcio_ll_input_disable(pin);
+        }
+        // RTC_GPIO_MODE_INPUT_OUTPU
+        2 => {
+            rtcio_ll_output_mode_set(pin, false);
+            rtcio_ll_output_enable(pin);
+            rtcio_ll_input_enable(pin);
+        }
+        // RTC_GPIO_MODE_DISABLED
+        3 => {
+            rtcio_ll_output_mode_set(pin, false);
+            rtcio_ll_output_disable(pin);
+            rtcio_ll_input_disable(pin);
+        }
+        // RTC_GPIO_MODE_OUTPUT_OD
+        4 => {
+            rtcio_ll_output_mode_set(pin, true);
+            rtcio_ll_output_enable(pin);
+            rtcio_ll_input_disable(pin);
+        }
+
+        // RTC_GPIO_MODE_INPUT_OUTPUT_OD
+        5 => {
+            rtcio_ll_output_mode_set(pin, true);
+            rtcio_ll_output_enable(pin);
+            rtcio_ll_input_enable(pin);
+        }
+        _ => (),
+    }
+}
+
+/// a
+pub fn read_fun_select(pin: u8) -> u8 {
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+    rtcio.touch_pad(pin as usize).read().fun_sel().bits()
+}
+
+fn rtcio_ll_function_select(pin: u8, func: u8) {
+    let sens = unsafe { &*SENS::ptr() };
+    let rtcio = unsafe { &*RTC_IO::ptr() };
+
+    if func == 0 {
+        sens.sar_peri_clk_gate_conf()
+            .write(|w| w.iomux_clk_en().set_bit());
+
+        rtcio
+            .touch_pad(pin as usize)
+            .write(|w| w.mux_sel().set_bit());
+
+        // rtcio_ll_iomux_func_sel
+        rtcio
+            .touch_pad(pin as usize)
+            .write(|w| unsafe { w.fun_sel().bits(func) });
+    } else {
+        rtcio
+            .touch_pad(pin as usize)
+            .write(|w| w.mux_sel().clear_bit());
+    }
+}
+
+/// aaa
+pub fn read_scan_map() -> u16 {
+    let rtccntl = unsafe { &*RTC_CNTL::ptr() };
+    rtccntl.touch_scan_ctrl().read().touch_scan_pad_map().bits()
+}
+
+/// aaa
+pub fn touch_hal_init() {
     let rtccntl = unsafe { &*RTC_CNTL::ptr() };
     let sens = unsafe { &*SENS::ptr() };
     // stop the fsm
@@ -169,7 +606,7 @@ fn touch_hal_init() {
     unsafe {
         rtccntl
             .touch_ctrl2()
-            .write(|w| w.touch_drefl().bits(0).touch_drefh().bits(3));
+            .write(|w| w.touch_drefh().bits(3).touch_drefl().bits(0));
     }
 
     // set voltage attenuation to 2
@@ -484,7 +921,7 @@ impl<P: TouchPin, Tm: TouchMode, Dm: DriverMode> TouchPad<P, Tm, Dm> {
     /// ## Parameters:
     /// - `pin`: The pin that gets configured as touch pad
     /// - `touch`: The [`Touch`] struct indicating that touch is configured.
-    pub fn new(pin: P, _touch: &Touch<'_, Tm, Dm>) -> Self {
+    pub fn new(pin: P) -> Self {
         // TODO revert this on drop
         pin.set_touch(Internal);
 
