@@ -1167,3 +1167,14 @@ mod asynch {
         }
     }
 }
+
+/// (Re-)Start a touch measurement on the pin. You can get the result by
+/// calling [`read`](Self::read) once it is finished.
+pub fn start_measurement() {
+    unsafe { &*crate::peripherals::RTC_CNTL::PTR }
+        .touch_ctrl2()
+        .modify(|_, w| w.touch_start_en().clear_bit());
+    unsafe { &*crate::peripherals::RTC_CNTL::PTR }
+        .touch_ctrl2()
+        .modify(|_, w| w.touch_start_en().set_bit());
+}
