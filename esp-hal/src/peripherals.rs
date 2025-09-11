@@ -137,6 +137,7 @@ for_each_peripheral! {
         macro_rules! ignore { ($any:tt) => {""} }
 
         /// The `Peripherals` struct provides access to all of the hardware peripherals on the chip.
+        #[cfg_attr(feature = "optfield", optfield::optfield(pub OptionalPeripherals, attrs, doc, field_attrs, field_doc, from))]
         #[allow(non_snake_case)]
         pub struct Peripherals {
             $(
