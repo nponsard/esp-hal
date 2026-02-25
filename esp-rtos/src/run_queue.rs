@@ -81,7 +81,9 @@ enum P {
 }
 
 impl P {
-    const MAX: Self = Self::P31;
+    // const MAX: Self = Self::P31;
+    // Set a lower maximum priority
+    const MAX: Self = Self::P16;
 
     const fn from_usize(p: usize) -> Self {
         match p {

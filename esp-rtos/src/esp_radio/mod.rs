@@ -68,6 +68,12 @@ impl esp_radio_rtos_driver::SchedulerImplementation for Scheduler {
         pin_to_core: Option<u32>,
         task_stack_size: usize,
     ) -> ThreadPtr {
+
+        // Panic when priority is higher than max_task_priority
+        if priority > self.max_task_priority() {
+            panic!("Invalid priority {} for {}", priority, name);
+        }
+
         self.create_task(
             name,
             task,
